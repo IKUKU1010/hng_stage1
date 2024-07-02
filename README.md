@@ -277,3 +277,8 @@ Anama-018; fin-data, collag
 
 
 ```
+
+
+The script ran successful as shown below
+
+![Successful](./script%20action.png)
