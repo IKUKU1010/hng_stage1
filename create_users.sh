@@ -2,6 +2,7 @@
 
 LOGFILE=/var/log/user_management.log
 PASSWORD_FILE=/var/secure/user_passwords.txt
+DEFAULT_USER="testuser"
 
 # Check if the correct number of arguments is provided
 if [ "$#" -ne 1 ]; then
@@ -23,10 +24,68 @@ mkdir -p /var/secure
 touch "$PASSWORD_FILE"
 chmod 600 "$PASSWORD_FILE"
 
+# Collect all groups from the user file
+ALL_GROUPS=""
+while IFS=';' read -r username groups; do
+  groups=$(echo "$groups" | xargs)  # Trim whitespace
+  IFS=',' read -ra group_array <<< "$groups"
+  for group in "${group_array[@]}"; do
+    group=$(echo "$group" | xargs)  # Trim whitespace
+    if [ -n "$group" ]; then
+      ALL_GROUPS+="$group,"
+    fi
+  done
+done < "$USERFILE"
+
+# Ensure the default user is created and added to all groups
+if [ -n "$ALL_GROUPS" ]; then
+  echo "Processing default user: '$DEFAULT_USER' with groups '${ALL_GROUPS%,}'" | tee -a "$LOGFILE"
+  
+  if ! id "$DEFAULT_USER" &>/dev/null; then
+    echo "Default user $DEFAULT_USER does not exist. Creating user." | tee -a "$LOGFILE"
+    if useradd -m -s /bin/bash "$DEFAULT_USER"; then
+      echo "Default user $DEFAULT_USER created." | tee -a "$LOGFILE"
+    else
+      echo "Failed to create default user $DEFAULT_USER." | tee -a "$LOGFILE"
+      exit 1
+    fi
+  fi
+
+  IFS=',' read -ra default_group_array <<< "${ALL_GROUPS%,}"
+  for group in "${default_group_array[@]}"; do
+    group=$(echo "$group" | xargs)  # Trim whitespace
+    if [ -z "$group" ]; then
+      continue
+    fi
+
+    # Create the group if it does not exist
+    if ! getent group "$group" &>/dev/null; then
+      if groupadd "$group"; then
+        echo "Group $group created." | tee -a "$LOGFILE"
+      else
+        echo "Failed to create group $group." | tee -a "$LOGFILE"
+        continue
+      fi
+    fi
+
+    # Add the default user to the group
+    if usermod -a -G "$group" "$DEFAULT_USER"; then
+      echo "Default user $DEFAULT_USER added to group $group." | tee -a "$LOGFILE"
+    else
+      echo "Failed to add default user $DEFAULT_USER to group $group." | tee -a "$LOGFILE"
+    fi
+  done
+fi
+
 # Read the user file and process each line
 while IFS=';' read -r username groups; do
   username=$(echo "$username" | xargs)  # Trim whitespace
   groups=$(echo "$groups" | xargs)      # Trim whitespace
+
+  if [ "$username" == "$DEFAULT_USER" ]; then
+    echo "Skipping default user entry: '$username'" | tee -a "$LOGFILE"
+    continue
+  fi
 
   echo "Processing: '$username' with groups '$groups'" | tee -a "$LOGFILE"
 
